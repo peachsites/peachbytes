@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PeachBytes Weather</title>
+    <style>
+        /* CSS is now embedded directly so it always loads */
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            background: linear-gradient(to bottom, #87CEEB, #E0F7FA);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        .weather-frame {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 300px;
+            border: 2px solid white;
+            z-index: 10;
+        }
+        h1 { color: #005f73; margin-top: 0; }
+        #temp { font-size: 2.5rem; font-weight: bold; color: #0077b6; }
+        
+        /* Button Style */
+        .weather-btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #0077b6;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .weather-btn:hover { background-color: #005f73; }
+    </style>
+</head>
+<body>
+
+    <div class="weather-frame">
+        <h1>Weather</h1>
+        <p>Temperature: <span id="temp">--</span>°F</p>
+        <!-- The Button -->
+        <a href="/weather" class="weather-btn">View Raw Data</a>
+    </div>
+
+    <script>
+        fetch('/weather')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('temp').innerText = data.temperature;
+            })
+            .catch(err => console.error('Error:', err));
+    </script>
+</body>
+</html>
