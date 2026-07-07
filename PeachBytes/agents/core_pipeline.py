@@ -1,11 +1,18 @@
 import os
+import json
 from typing import Dict, TypedDict
 from openai import OpenAI
+from pyairtable import Api  # Modern standard client for Airtable
 
-# Initialize client (can easily swap between OpenAI, Gemini, or open-source)
+# Initialize clients
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 1. Define the State of our pipeline
+# Initialize Airtable (Will use fallback variables if not fully configured yet)
+AIRTABLE_TOKEN = os.environ.get("AIRTABLE_API_KEY", "mock_token")
+BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "mock_base")
+TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME", "Community_Updates")
+
+# 1. Define State
 class AgentState(TypedDict):
     raw_input: str
     extracted_json: str
@@ -13,61 +20,33 @@ class AgentState(TypedDict):
     iterations: int
     is_valid: bool
 
-# 2. Agent A: The Extractor
-def extractor_agent(state: AgentState) -> Dict:
-    print("--- EXTRACTOR AGENT RUNNING ---")
-    feedback = state.get("validation_feedback", "None")
-    
-    system_prompt = (
-        "You are an expert Data Extraction Agent. Your job is to parse unstructured community text "
-        "and return a strict JSON object with these keys: 'title', 'date', 'location', 'summary'. "
-        "If you receive feedback about a previous error, correct it immediately."
-    )
-    
-    user_content = f"Raw Text: {state['raw_input']}\nPrevious Feedback: {feedback}"
-    
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
-    )
-    
-    return {
-        "extracted_json": response.choices[0].message.content,
-        "iterations": state.get("iterations", 0) + 1
-    }
+# [Keep your previous extractor_agent and validator_agent functions completely as they are]
 
-# 3. Agent B: The Evaluator / Validator
-def validator_agent(state: AgentState) -> Dict:
-    print("--- VALIDATOR AGENT RUNNING ---")
-    current_json = state["extracted_json"]
-    
-    system_prompt = (
-        "You are a strict Data Compliance Auditor. Inspect the provided JSON string. "
-        "Verify that it contains valid JSON structure and no keys are empty or flagged as 'unknown'. "
-        "Respond with EXACTLY 'VALID' if it passes. If it fails, provide explicit feedback on what is missing."
-    )
-    
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": current_json}
-        ]
-    )
-    
-    result = response.choices[0].message.content.strip()
-    
-    if "VALID" in result:
-        return {"is_valid": True, "validation_feedback": ""}
-    else:
-        return {"is_valid": False, "validation_feedback": result}
+# 2. Tool Execution: Push verified payload to database
+def save_to_airtable(json_string: str) -> bool:
+    print("--- WRITING TO PRODUCTION DATABASE (AIRTABLE) ---")
+    try:
+        # Parse the string into a clean Python dictionary
+        data_fields = json.loads(json_string)
+        
+        # If in playground/mock mode, simulate the success
+        if "mock" in AIRTABLE_TOKEN or "mock" in BASE_ID:
+            print(f"[Mock Mode] Successfully simulated database write for: {data_fields['title']}")
+            return True
+            
+        # Code-first execution against production API
+        airtable_api = Api(AIRTABLE_TOKEN)
+        table = airtable_api.table(BASE_ID, TABLE_NAME)
+        table.create(data_fields)
+        print("🎉 Successfully committed entry to live database table.")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error committing data to database: {str(e)}")
+        return False
 
-# 4. Simple Deterministic Router Loop
+# 3. Updated Orchestrator Loop
 def run_pipeline(raw_text: str) -> Dict:
-    # Initialize state
     state: AgentState = {
         "raw_input": raw_text,
         "extracted_json": "",
@@ -76,19 +55,23 @@ def run_pipeline(raw_text: str) -> Dict:
         "is_valid": False
     }
     
-    # Run loop up to 3 times to prevent infinite API billing
+    # Core multi-agent state evaluation loop
     while not state["is_valid"] and state["iterations"] < 3:
         state.update(extractor_agent(state))
         state.update(validator_agent(state))
         
+    # NEW STEP: If the data is completely validated, trigger the database tool
+    if state["is_valid"]:
+        db_success = save_to_airtable(state["extracted_json"])
+        state["database_synchronized"] = db_success
+    else:
+        state["database_synchronized"] = False
+        print("⚠️ Pipeline exited without syncing. Data quality requirements not met.")
+        
     return state
 
-# --- Execution Test ---
+# --- Test Execution ---
 if __name__ == "__main__":
     sample_text = "Hey neighbors! We are holding the annual Conyers block party over at the central park commons. It's happening this Saturday afternoon, but we still don't know the exact time yet. There will be food trucks!"
     
     final_output = run_pipeline(sample_text)
-    print("\n--- FINAL AGENT STATE RESULT ---")
-    print(f"Iterations: {final_output['iterations']}")
-    print(f"Is Valid: {final_output['is_valid']}")
-    print(f"Resulting Payload: \n{final_output['extracted_json']}")
